@@ -1,0 +1,759 @@
+import asyncio
+import logging
+import random
+import uuid
+from typing import Dict, List, Optional, Set
+from dataclasses import dataclass, field
+
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    CallbackQuery,
+    Message
+)
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramForbiddenError
+
+# ==========================================
+# 1. КОНФИГУРАЦИЯ
+# ==========================================
+
+# ⚠️ ЗАМЕНИТЕ НА СВОЙ ТОКЕН
+API_TOKEN = "8227224834:AAG5z7ztfDzmrxoxvBYqCRg8Uw-MVtwu75U"
+
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+
+# ==========================================
+# 2. БАЗА ДАННЫХ КОНТЕНТА И КАТАСТРОФ
+# ==========================================
+
+CATASTROPHES = [
+    "☢️ **Ядерная зима.** Мир уничтожен ядерными ударами. Снаружи радиация, температура -50°C, вечная тьма. Выживут только те, кто полезен в замкнутом пространстве и умеет работать с техникой.",
+    "🧟 **Зомби-апокалипсис.** Вирус бешенства выкосил 99% населения. Бункер окружен толпами быстрых и агрессивных зараженных. Нужны бойцы, медики и те, кто умеет укреплять оборону.",
+    "🌊 **Всемирный потоп.** Суши больше нет. Бункер — это герметичная подводная станция на дне океана. Ресурсы ограничены, давление колоссальное. Важны психологическая устойчивость и умение чинить системы жизнеобеспечения.",
+    "🤖 **Восстание машин.** ИИ захватил планету. Дроны-охотники ищут выживших. Любая электроника снаружи опасна. В цене хакеры, механики и люди с навыками выживания без гаджетов.",
+    "☄️ **Падение астероида.** Атмосфера отравлена токсичной пылью, кислорода снаружи нет. Бункер должен стать полностью автономной биосферой на ближайшие 50 лет. Нужны агрономы, генетики и инженеры."
+]
+
+CONTENT = {
+    "professions": [
+        "Врач-хирург", "Учитель физики", "Сантехник 6-го разряда", "Агроном", "Веб-дизайнер-фрилансер",
+        "Спецназовец ГРУ в отставке", "Священник", "Шеф-повар", "Автомеханик", "Психотерапевт",
+        "Химик-технолог", "ТикТок блогер (5 млн)", "Человек без определенного места жительства", "Депутат Госдумы", "Ветеринар",
+        "Главный архитектор города", "Электрик", "Эскортница", "Федеральный судья", "Пилот гражданской авиации",
+        "Мясник на рынке", "Переводчик с китайского и арабского", "Астрофизик", "Фитнес-тренер", "Гробовщик",
+        "Хакер (Black Hat)", "Уборщица в Газпроме", "Геолог-разведчик", "Библиотекарь", "Стриптизерша", "Генетик",
+        "Водитель автобуса", "Охранник в Пятерочке", "Тату-мастер", "Фермер"
+    ],
+    "health": [
+        "Идеально здоров (как космонавт)", "Бронхиальная астма (тяжелая форма)", "Бесплодие", "ВИЧ-инфицирован (принимает терапию)",
+        "Паранойяльная шизофрения", "Сахарный диабет 1 типа (инсулинозависимый)", "Рак легких (3 стадия, терминальная)",
+        "Отсутствует левая нога (протез)", "Тотальная глухота", "Слепота на один глаз", "Хронический алкоголизм (в завязке)",
+        "Героиновая наркозависимость (активная)", "Коронавирус (активная фаза, заразен)", "Эпилепсия (частые припадки)",
+        "Сильная аллергия на пыль и плесень", "Беременна (7 месяц, двойня)", "Морбидное ожирение (180 кг)",
+        "Анорексия (критический вес)", "Зрение -10 (почти слеп без очков)", "Генитальный герпес", "Сифилис (заразен)", "Открытая форма туберкулеза",
+        "Тяжелые панические атаки", "Бионический протез руки", "Кардиостимулятор (требует замены батареи)", "Хроническая бессонница (не спит по 3 дня)"
+    ],
+    "hobbies": [
+        "Выращивание овощей на гидропонике", "Спортивная стрельба (КМС)", "Охота на крупного зверя", "Рыбалка (знает все узлы)", "Вязание теплых вещей",
+        "Профессиональный покер", "Ремонт сложной электроники", "Кулинария из подножного корма", "Полиглот (7 языков)", "Мастер оригами",
+        "Шахматы (гроссмейстер)", "Тайский бокс", "Разведение кроликов", "Изучение средневековой алхимии", "Гадание на картах Таро",
+        "Паркур", "Филателист (коллекционирует марки)", "Кундалини-йога", "Виртуозная игра на гитаре", "Курсы выживания в тайге"
+    ],
+    "facts": [
+        "Отсидел 8 лет за крупное мошенничество", "В школе выиграл всероссийскую олимпиаду по химии", "В прошлом был замечен в каннибализме (выживание в горах)",
+        "Построил собственный бункер на даче (но не успел доехать)", "Может задержать дыхание на 5 минут", "Внебрачный сын олигарха (имеет доступ к счетам)", "Умеет управлять вертолетом",
+        "Сертифицированный инструктор первой помощи Красного Креста", "Абсолютно не умеет читать и писать", "Панически боится темноты (нужен ночник)",
+        "Воинствующий веган (навязывает всем)", "IQ 165 (гений)", "Родился с рудиментарным хвостом", "Служил в трех горячих точках",
+        "Случайно убил человека на охоте и скрыл это", "Подпольный криптовалютный миллионер", "Владеет техниками боевого гипноза"
+    ],
+    "phobias": [
+        "Клаустрофобия (боязнь замкнутых пространств)", "Арахнофобия (пауки)", "Гемофобия (вид крови вызывает обморок)",
+        "Никтофобия (темнота)", "Акрофобия (высота)", "Социофобия (боится людей)", "Аквафобия (вода, не умеет плавать)",
+        "Офидиофобия (змеи)", "Аэрофобия (полеты)", "Дентофобия (стоматологи)", "Мизофобия (паническая боязнь микробов и грязи)"
+    ],
+    "luggage": [
+        "Большая профессиональная аптечка", "Охотничье ружье с патронами", "Набор слесарных инструментов", "Мешок семенного картофеля (10 кг)",
+        "Колода игральных карт", "Армейский противогаз с фильтрами", "Ящик элитной водки (12 бутылок)", "Мощный тактический фонарь (с динамо-машиной)",
+        "Защищенный ноутбук с базой данных по выживанию",
+        "Надувная лодка", "Туристический топор", "Компас и топографические карты местности", "Большая упаковка презервативов",
+        "Любимый плюшевый мишка (талисман)", "Акустическая гитара", "Бинокль ночного видения", "Коробка охотничьих спичек (1000 шт)",
+        "Набор профессиональных кухонных ножей",
+        "Рация дальнего действия (2 шт)", "Портативная солнечная панель", "Учебник «Полевая хирургия»", "Кальян и табак", "Настоящая японская катана"
+    ]
+}
+
+# ==========================================
+# 3. МОДЕЛИ ДАННЫХ
+# ==========================================
+
+@dataclass
+class GameAttribute:
+    text: str
+    is_revealed: bool = False
+    metadata: dict = field(default_factory=dict)
+
+@dataclass
+class SpecialCard:
+    uid: str
+    name: str
+    description: str
+    effect_type: str # heal, reveal, kick, steal, swap, shield, silence, double_vote, reroll
+    icon: str
+    is_used: bool = False
+
+@dataclass
+class Player:
+    user_id: int
+    full_name: str
+    username: str
+    
+    profession: GameAttribute = None
+    health: GameAttribute = None
+    bio: GameAttribute = None
+    hobby: GameAttribute = None
+    fact: GameAttribute = None
+    phobia: GameAttribute = None
+    luggage: List[GameAttribute] = field(default_factory=list)
+    
+    action_cards: List[SpecialCard] = field(default_factory=list)
+    
+    is_alive: bool = True
+    # Временные эффекты на раунд
+    vote_weight: int = 1
+    is_shielded: bool = False # Защита от карт
+    is_silenced: bool = False # Запрет на использование карт/раскрытие
+
+    dashboard_msg_id: int = None
+
+@dataclass
+class GameSession:
+    chat_id: int
+    players: Dict[int, Player] = field(default_factory=dict)
+    state: str = "LOBBY" # LOBBY, GAME, VOTING
+    round_number: int = 0
+    scenario: str = ""
+    votes: Dict[int, int] = field(default_factory=dict)
+    voters: Set[int] = field(default_factory=set) # Кто уже проголосовал в этом раунде
+
+GAMES: Dict[int, GameSession] = {}
+USER_SESSIONS: Dict[int, int] = {} # user_id -> chat_id игры
+
+# ==========================================
+# 4. ЛОГИКА ГЕНЕРАЦИИ (НОВЫЕ КАРТЫ!)
+# ==========================================
+
+def get_random_card() -> SpecialCard:
+    """Генератор спецкарт с разными шансами (Обновленный пул)"""
+    pool = [
+        # (Вес, Имя, Описание, Тип, Иконка)
+        # --- Частые (45%) ---
+        (15, "💉 Панацея", "Полностью вылечить любую болезнь у себя или другого.", "heal", "💉"),
+        (15, "🩻 Рентген", "Узнать здоровье и биологию любого игрока в ЛС.", "reveal", "🩻"),
+        (15, "🧤 Карманник", "Украсть случайный предмет у игрока.", "steal", "🧤"),
+        
+        # --- Редкие (35%) ---
+        (10, "🔄 Кадровик", "Поменяться профессиями с другим игроком (в закрытую).", "swap", "🔄"),
+        (10, "🛡️ Железный занавес", "Вы становитесь неуязвимы для ЛЮБЫХ карт других игроков на 1 раунд.", "shield", "🛡️"),
+        (10, "🤐 Кляп", "Выбранный игрок не может использовать свои карты и кнопки раскрытия в этом раунде.", "silence", "🤐"),
+        (5, "🗳️ Вброс бюллетеней", "Ваш голос на следующем голосовании считается за два.", "double_vote", "🗳️"),
+
+        # --- Эпические (20%) ---
+        (10, "🎲 Реролл судьбы", "Тайно перегенерировать себе ЗДОРОВЬЕ или ФОБИЮ (на выбор).", "reroll", "🎲"),
+        (10, "⚖️ Судья Дредд", "ЛИЧНО выбрать того, кто покинет бункер прямо сейчас (без голосования).", "kick", "⚖️"),
+    ]
+    
+    total = sum(w for w, *c in pool)
+    r = random.uniform(0, total)
+    upto = 0
+    for w, name, desc, effect, icon in pool:
+        if upto + w >= r:
+            return SpecialCard(str(uuid.uuid4()), name, desc, effect, icon)
+        upto += w
+    return pool[0][1] # Fallback
+
+def generate_player(user: types.User) -> Player:
+    p = Player(user_id=user.id, full_name=user.full_name, username=user.username or "Unknown")
+    
+    p.profession = GameAttribute(text=random.choice(CONTENT["professions"]))
+    p.health = GameAttribute(text=random.choice(CONTENT["health"]))
+    
+    age = random.randint(18, 90)
+    gender = random.choice(["Мужчина", "Женщина"])
+    fertility_chance = 0.8 if age < 45 else 0.1
+    fertility = "Плоден(на)" if random.random() < fertility_chance else "Бесплоден(на)"
+    
+    p.bio = GameAttribute(text=f"{gender}, {age} лет, {fertility}", metadata={"age": age})
+    p.hobby = GameAttribute(text=random.choice(CONTENT["hobbies"]))
+    p.fact = GameAttribute(text=random.choice(CONTENT["facts"]))
+    p.phobia = GameAttribute(text=random.choice(CONTENT["phobia"]))
+    
+    # 2 предмета багажа
+    items = random.sample(CONTENT["luggage"], 2)
+    for item in items:
+        p.luggage.append(GameAttribute(text=item))
+        
+    # 2 спецкарты для большего экшена
+    for _ in range(2):
+        p.action_cards.append(get_random_card())
+    
+    return p
+
+def reset_round_effects(game: GameSession):
+    """Сброс временных эффектов перед новым раундом"""
+    game.voters.clear()
+    game.votes.clear()
+    for p in game.players.values():
+        if p.is_alive:
+            p.vote_weight = 1
+            p.is_shielded = False
+            p.is_silenced = False
+
+# ==========================================
+# 5. UI: ДАШБОРД И КНОПКИ
+# ==========================================
+
+def render_dashboard_text(player: Player) -> str:
+    if not player.is_alive:
+        return "💀 **ВЫ МЕРТВЫ / ИЗГНАНЫ** 💀\n\nВы можете наблюдать за игрой, но не вмешиваться."
+
+    icon_map = {True: "📢", False: "🔒"}
+    
+    t = f"📂 **ЛИЧНОЕ ДЕЛО: {player.full_name}**\n"
+    
+    # Статусы
+    status_line = []
+    if player.vote_weight > 1: status_line.append("🗳️x2 Голос")
+    if player.is_shielded: status_line.append("🛡️ Под защитой")
+    if player.is_silenced: status_line.append("🤐 Молчание")
+    if status_line:
+        t += f"Статус: {' | '.join(status_line)}\n"
+
+    t += "━━━━━━━━━━━━━━━━━━\n"
+    
+    attrs = [
+        ("🧑‍💼 Профессия", player.profession),
+        ("🧬 Биология", player.bio),
+        ("❤️ Здоровье", player.health),
+        ("🎨 Хобби", player.hobby),
+        ("💡 Факт", player.fact),
+        ("😱 Фобия", player.phobia)
+    ]
+    
+    for label, attr in attrs:
+        prefix = icon_map[attr.is_revealed]
+        # Если раскрыто, показываем жирным, иначе курсивом (скрыто)
+        val = f"**{attr.text}**" if attr.is_revealed else f"_{attr.text}_"
+        t += f"{prefix} {label}: {val}\n"
+    
+    t += "━━━━━━━━━━━━━━━━━━\n"
+    t += "🎒 **ИНВЕНТАРЬ:**\n"
+    if not player.luggage:
+        t += "_Пусто..._\n"
+    for item in player.luggage:
+        prefix = icon_map[item.is_revealed]
+        val = f"**{item.text}**" if item.is_revealed else f"_{item.text}_"
+        t += f"{prefix} ▫️ {val}\n"
+        
+    t += "━━━━━━━━━━━━━━━━━━\n"
+    cards_active = [c for c in player.action_cards if not c.is_used]
+    t += f"🃏 **СПЕЦКАРТЫ ({len(cards_active)}):**\n"
+    if not cards_active:
+        t += "_Нет карт_\n"
+    for c in cards_active:
+        t += f"{c.icon} **{c.name}** — _{c.description}_\n"
+        
+    return t
+
+def get_main_kb(player: Player) -> InlineKeyboardMarkup:
+    if not player.is_alive: return None
+    b = InlineKeyboardBuilder()
+    
+    # Блокируем кнопки действий, если наложен "Кляп"
+    if player.is_silenced:
+         b.button(text="🤐 На вас кляп (Действия заблокированы)", callback_data="dummy_silenced")
+    else:
+        b.button(text="🗣️ Раскрыть правду", callback_data="menu_reveal")
+        b.button(text="🃏 Сыграть карту", callback_data="menu_cards")
+        
+    b.button(text="🎒 Показать багаж", callback_data="do_reveal:luggage")
+    b.button(text="🔄 Обновить дашборд", callback_data="refresh")
+    b.adjust(1)
+    return b.as_markup()
+
+def get_reveal_kb(player: Player) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    attrs = [("prof", player.profession, "🧑‍💼 Профессия"), 
+             ("health", player.health, "❤️ Здоровье"),
+             ("bio", player.bio, "🧬 Биология"), 
+             ("hobby", player.hobby, "🎨 Хобби"),
+             ("fact", player.fact, "💡 Факт"), 
+             ("phobia", player.phobia, "😱 Фобия")]
+    
+    for code, attr, label in attrs:
+        if not attr.is_revealed:
+            b.button(text=f"Раскрыть: {label}", callback_data=f"do_reveal:{code}")
+        else:
+             b.button(text=f"✅ {label} раскрыто", callback_data="dummy_revealed")
+            
+    b.button(text="🔙 Назад в меню", callback_data="back_main")
+    b.adjust(2)
+    return b.as_markup()
+
+# ==========================================
+# 6. ОБРАБОТЧИКИ (HANDLERS)
+# ==========================================
+
+@dp.message(Command("start"))
+async def cmd_start(m: Message):
+    await m.answer("👋 Я бот-ведущий игры «Бункер».\n\n"
+                   "Чтобы начать игру:\n1. Добавь меня в группу.\n2. Напиши там команду /new_game")
+
+# --- ГРУППОВЫЕ КОМАНДЫ ---
+
+@dp.message(Command("new_game"))
+async def cmd_new(m: Message):
+    if m.chat.type == 'private':
+        return await m.answer("Эту команду нужно писать в группе, где будет игра!")
+        
+    GAMES[m.chat.id] = GameSession(chat_id=m.chat.id)
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Вступить в игру", callback_data="join")
+    
+    await m.answer("☢️ **НОВАЯ ИГРА: БУНКЕР** ☢️\n\n"
+                   "Набор игроков открыт! Жми кнопку, чтобы получить персонажа в ЛС.", 
+                   reply_markup=kb.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "join")
+async def cb_join(cb: CallbackQuery):
+    game = GAMES.get(cb.message.chat.id)
+    if not game or game.state != "LOBBY": 
+        return await cb.answer("Набор закрыт!", show_alert=True)
+    
+    if cb.from_user.id in game.players:
+        return await cb.answer("Ты уже в игре!", show_alert=True)
+        
+    p = generate_player(cb.from_user)
+    game.players[cb.from_user.id] = p
+    USER_SESSIONS[cb.from_user.id] = game.chat_id
+    
+    await cb.answer("Персонаж создан! Проверь личку.")
+    
+    # Обновляем лобби сообщение
+    players_list = "\n".join([f"{i+1}. {pl.full_name}" for i, pl in enumerate(game.players.values())])
+    await cb.message.edit_text(
+        f"☢️ **ИГРОКОВ В ЛОББИ: {len(game.players)}**\n\n{players_list}\n\nЖдем остальных...",
+        reply_markup=cb.message.reply_markup, parse_mode="Markdown"
+    )
+    
+    # Отправляем дашборд в ЛС
+    try:
+        msg = await bot.send_message(p.user_id, render_dashboard_text(p), 
+                                     reply_markup=get_main_kb(p), parse_mode="Markdown")
+        p.dashboard_msg_id = msg.message_id
+    except TelegramForbiddenError:
+        await cb.message.answer(f"❌ {p.full_name}, у тебя заблокирован бот! Напиши мне в ЛС /start и попробуй вступить снова.")
+        del game.players[cb.from_user.id]
+        del USER_SESSIONS[cb.from_user.id]
+
+@dp.message(Command("start_game"))
+async def cmd_start_game(m: Message):
+    game = GAMES.get(m.chat.id)
+    if not game or game.state != "LOBBY": return
+    if len(game.players) < 2:
+        return await m.answer("Нужно минимум 2 игрока для начала!")
+
+    # Генерация катастрофы
+    game.scenario = random.choice(CATASTROPHES)
+    game.state = "GAME"
+    game.round_number = 1
+    reset_round_effects(game)
+
+    await m.answer(
+        f"🔥 **БУНКЕР ЗАПЕЧАТАН! ИГРА НАЧАЛАСЬ!** 🔥\n\n"
+        f"🌍 **СИТУАЦИЯ СНАРУЖИ:**\n{game.scenario}\n\n"
+        f"👥 **Выжившие ({len(game.players)}):**\n"
+        f"Доказывайте свою полезность, раскрывайте карты через бота в ЛС.\n"
+        f"Когда будете готовы голосовать — ведущий пишет /vote",
+        parse_mode="Markdown"
+    )
+    # Обновляем дашборды всем, чтобы разблокировать кнопки (если были заблокированы)
+    for p in game.players.values():
+        await refresh_dash(p.user_id)
+
+
+# --- ЛИЧНЫЕ ДЕЙСТВИЯ (В ЛС) ---
+
+async def refresh_dash(user_id: int):
+    chat_id = USER_SESSIONS.get(user_id)
+    if not chat_id: return
+    game = GAMES.get(chat_id)
+    if not game: return
+    p = game.players.get(user_id)
+    if not p or not p.dashboard_msg_id: return
+    
+    try:
+        # Используем edit_message_text, если контент изменился
+        current_text = render_dashboard_text(p)
+        current_kb = get_main_kb(p)
+        
+        # Небольшой хак: aiogram не даст отредактировать сообщение на точно такое же.
+        # Чтобы кнопка "Обновить" всегда давала фидбек, можно добавлять невидимый символ к тексту,
+        # но проще просто ловить ошибку "message is not modified".
+        await bot.edit_message_text(
+            current_text, 
+            chat_id=user_id, 
+            message_id=p.dashboard_msg_id,
+            reply_markup=current_kb, 
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        # Игнорируем ошибку, если текст не изменился
+        if "message is not modified" not in str(e):
+             logging.warning(f"Could not refresh dash for {user_id}: {e}")
+
+
+@dp.callback_query(F.data == "refresh")
+async def cb_ref(cb: CallbackQuery):
+    await refresh_dash(cb.from_user.id)
+    await cb.answer("Дашборд обновлен!")
+
+@dp.callback_query(F.data == "dummy_silenced")
+async def cb_dummy_s(cb: CallbackQuery):
+    await cb.answer("⛔ На вас наложен кляп! Вы не можете выполнять действия в этом раунде.", show_alert=True)
+
+@dp.callback_query(F.data == "dummy_revealed")
+async def cb_dummy_r(cb: CallbackQuery):
+    await cb.answer("Эта характеристика уже раскрыта всем.", show_alert=True)
+
+@dp.callback_query(F.data == "back_main")
+async def cb_back(cb: CallbackQuery):
+    game = GAMES[USER_SESSIONS[cb.from_user.id]]
+    p = game.players[cb.from_user.id]
+    await cb.message.edit_reply_markup(reply_markup=get_main_kb(p))
+
+@dp.callback_query(F.data == "menu_reveal")
+async def cb_menu_rev(cb: CallbackQuery):
+    uid = cb.from_user.id
+    game = GAMES[USER_SESSIONS[uid]]
+    p = game.players[uid]
+    if p.is_silenced: return await cb.answer("⛔ Кляп мешает говорить!", show_alert=True)
+    await cb.message.edit_reply_markup(reply_markup=get_reveal_kb(p))
+
+@dp.callback_query(F.data.startswith("do_reveal:"))
+async def cb_do_rev(cb: CallbackQuery):
+    code = cb.data.split(":")[1]
+    uid = cb.from_user.id
+    game = GAMES[USER_SESSIONS[uid]]
+    p = game.players[uid]
+    
+    if p.is_silenced: return await cb.answer("⛔ Кляп мешает говорить!", show_alert=True)
+
+    attr_map = {
+        "prof": ("🧑‍💼 Профессия", p.profession), "health": ("❤️ Здоровье", p.health),
+        "bio": ("🧬 Биология", p.bio), "hobby": ("🎨 Хобби", p.hobby),
+        "fact": ("💡 Факт", p.fact), "phobia": ("😱 Фобия", p.phobia)
+    }
+    
+    txt = ""
+    if code == "luggage":
+        if not p.luggage: return await cb.answer("Багаж пуст!")
+        for i in p.luggage: i.is_revealed = True
+        txt = f"🎒 **{p.full_name}** вытряхивает рюкзак и показывает всем свои вещи:\n" + \
+              "\n".join([f"- {i.text}" for i in p.luggage])
+    elif code in attr_map:
+        name, attr = attr_map[code]
+        if attr.is_revealed: return await cb.answer("Уже раскрыто!")
+        attr.is_revealed = True
+        txt = f"🗣 **{p.full_name}** раскрывает карты:\n\n👉 **{name}:** {attr.text}"
+    
+    await bot.send_message(game.chat_id, txt, parse_mode="Markdown")
+    await refresh_dash(uid)
+    # Возвращаем в меню раскрытия
+    await cb.message.edit_reply_markup(reply_markup=get_reveal_kb(p))
+    await cb.answer("Раскрыто!")
+
+# --- СЛОЖНАЯ ЛОГИКА КАРТ ---
+
+@dp.callback_query(F.data == "menu_cards")
+async def cb_menu_cards(cb: CallbackQuery):
+    uid = cb.from_user.id
+    game = GAMES[USER_SESSIONS[uid]]
+    p = game.players[uid]
+
+    if p.is_silenced: return await cb.answer("⛔ Кляп мешает использовать карты!", show_alert=True)
+    
+    active = [c for c in p.action_cards if not c.is_used]
+    if not active: return await cb.answer("У вас нет активных карт!", show_alert=True)
+    
+    b = InlineKeyboardBuilder()
+    for c in active:
+        b.button(text=f"{c.icon} {c.name}", callback_data=f"sel_card:{c.uid}")
+    b.button(text="🔙 Назад", callback_data="back_main")
+    b.adjust(1)
+    await cb.message.edit_reply_markup(reply_markup=b.as_markup())
+
+@dp.callback_query(F.data.startswith("sel_card:"))
+async def cb_sel_card(cb: CallbackQuery):
+    c_uid = cb.data.split(":")[1]
+    uid = cb.from_user.id
+    game = GAMES[USER_SESSIONS[uid]]
+    initiator = game.players[uid]
+    card = next((c for c in initiator.action_cards if c.uid == c_uid), None)
+
+    if initiator.is_silenced: return await cb.answer("⛔ Кляп!", show_alert=True)
+    
+    # Карты, которые применяются на себя
+    self_target_types = ["double_vote", "shield", "reroll"]
+
+    if card.effect_type in self_target_types:
+        # Сразу применяем, без выбора цели
+        await apply_card_effect(game, initiator, initiator, card)
+        await cb.answer("Карта применена!")
+        await refresh_dash(uid) # Возврат в главное меню
+        return
+
+    # Карты, требующие выбора цели
+    b = InlineKeyboardBuilder()
+    for pid, target in game.players.items():
+        if target.is_alive and pid != uid: # Нельзя на себя
+            b.button(text=f"{target.full_name}", callback_data=f"act_card:{c_uid}:{pid}")
+            
+    b.button(text="❌ Отмена", callback_data="back_main")
+    b.adjust(2)
+    await cb.message.edit_text(f"🎯 Выберите цель для карты «{card.name}»:", reply_markup=b.as_markup())
+
+@dp.callback_query(F.data.startswith("act_card:"))
+async def cb_act_card(cb: CallbackQuery):
+    _, c_uid, t_id = cb.data.split(":")
+    t_id = int(t_id)
+    uid = cb.from_user.id
+    game = GAMES[USER_SESSIONS[uid]]
+    initiator = game.players[uid]
+    target = game.players[t_id]
+    
+    card = next((c for c in initiator.action_cards if c.uid == c_uid), None)
+    
+    if initiator.is_silenced: return await cb.answer("⛔ Кляп!", show_alert=True)
+    if not card or card.is_used: return await cb.answer("Ошибка карты", show_alert=True)
+
+    # Проверка щита у цели
+    if target.is_shielded and card.effect_type not in ["reveal", "heal"]: # Щит не спасает от лечения и скана (для баланса)
+         card.is_used = True
+         await bot.send_message(game.chat_id, f"🛡️ **{initiator.full_name}** пытается использовать карту «{card.name}» на **{target.full_name}**, но натыкается на Железный занавес! Карта потрачена впустую.", parse_mode="Markdown")
+         await refresh_dash(uid)
+         await cb.answer("Цель защищена!")
+         return
+
+    await apply_card_effect(game, initiator, target, card)
+    await cb.answer("Карта сыграна!")
+    # Возвращаем дашборд в исходное состояние
+    await refresh_dash(uid)
+
+# --- ЛОГИКА ЭФФЕКТОВ КАРТ ---
+
+async def apply_card_effect(game: GameSession, initiator: Player, target: Player, card: SpecialCard):
+    log = ""
+    chat_alert = True
+
+    if card.effect_type == "heal":
+        target.health.text = "Полностью здоров (Вылечен панацеей)"
+        target.health.is_revealed = True
+        log = f"💉 **{initiator.full_name}** использует Панацею на **{target.full_name}**! Теперь он полностью здоров и это подтверждено."
+        await refresh_dash(target.user_id)
+
+    elif card.effect_type == "reveal":
+        info = f"🩻 **Результат рентгена {target.full_name}:**\n\n" \
+               f"❤️ Здоровье: {target.health.text}\n" \
+               f"🧬 Биология: {target.bio.text}\n" \
+               f"😱 Фобия: {target.phobia.text}"
+        await bot.send_message(initiator.user_id, info)
+        log = f"🩻 **{initiator.full_name}** просвечивает рентгеном игрока **{target.full_name}**, узнавая его секреты."
+        chat_alert = False # Не спамим в чат деталями
+
+    elif card.effect_type == "kick":
+        target.is_alive = False
+        log = f"⚖️ **ПРИГОВОР СУДЬИ ДРЕДДА!**\n\nИгрок **{initiator.full_name}** казнит игрока **{target.full_name}** на месте.\nОн немедленно выбрасывается из бункера."
+        await refresh_dash(target.user_id)
+
+    elif card.effect_type == "steal":
+        if target.luggage:
+            item = target.luggage.pop(0) # Крадем первый предмет
+            item.is_revealed = False # Новый владелец может его скрыть
+            initiator.luggage.append(item)
+            log = f"🧤 **{initiator.full_name}** незаметно обчистил карманы **{target.full_name}** и украл один предмет!"
+            await refresh_dash(target.user_id)
+        else:
+            log = f"🧤 **{initiator.full_name}** пошарил по карманам {target.full_name}, но там только дырки."
+
+    elif card.effect_type == "swap":
+        # Обмен профессиями в закрытую
+        p1_prof = initiator.profession
+        p2_prof = target.profession
+        # Меняем тексты, сохраняя статус раскрытия (или сбрасывая его для интриги)
+        initiator.profession = p2_prof
+        target.profession = p1_prof
+        
+        # Сбрасываем флаг раскрытия, чтобы интрига сохранилась
+        initiator.profession.is_revealed = False
+        target.profession.is_revealed = False
+        
+        log = f"🔄 **КАДРОВАЯ ПЕРЕСТАНОВКА!**\n**{initiator.full_name}** и **{target.full_name}** поменялись профессиями и бейджиками в суматохе. Никто не знает, кто они теперь!"
+        await refresh_dash(target.user_id)
+
+    # --- НОВЫЕ ЭФФЕКТЫ ---
+    elif card.effect_type == "silence":
+        target.is_silenced = True
+        log = f"🤐 **{initiator.full_name}** вставляет кляп в рот **{target.full_name}**! Этот игрок не сможет использовать карты и говорить в этом раунде."
+        await refresh_dash(target.user_id)
+
+    elif card.effect_type == "shield":
+        initiator.is_shielded = True
+        log = f"🛡️ **{initiator.full_name}** активирует «Железный занавес»! Он неуязвим для чужих карт до конца раунда."
+        # Дашборд обновится в конце хендлера cb_sel_card
+
+    elif card.effect_type == "double_vote":
+        initiator.vote_weight = 2
+        log = f"🗳️ **{initiator.full_name}** готовит вброс бюллетеней! Его голос на следующем голосовании будет иметь двойную силу."
+
+    elif card.effect_type == "reroll":
+        # Механика реролла (Здоровье или Фобия)
+        new_health = random.choice(CONTENT["health"])
+        new_phobia = random.choice(CONTENT["phobia"])
+        
+        initiator.health = GameAttribute(text=new_health, is_revealed=False)
+        initiator.phobia = GameAttribute(text=new_phobia, is_revealed=False)
+        
+        await bot.send_message(
+            initiator.user_id,
+            f"🎲 **СУДЬБА ИЗМЕНЕНА!**\n\n"
+            f"Ваше новое здоровье: {new_health}\n"
+            f"Ваша новая фобия: {new_phobia}\n\n"
+            f"_(Старые данные стерты, новые скрыты)_"
+        )
+        log = f"🎲 **{initiator.full_name}** тайно изменил свою судьбу (перегенерировал часть характеристик)."
+        chat_alert = False
+
+    card.is_used = True
+    if chat_alert:
+         await bot.send_message(game.chat_id, log, parse_mode="Markdown")
+
+# --- ГОЛОСОВАНИЕ (ИСПРАВЛЕНО) ---
+
+@dp.message(Command("vote"))
+async def cmd_vote(m: Message):
+    game = GAMES.get(m.chat.id)
+    if not game or game.state != "GAME": return
+    
+    game.state = "VOTING"
+    game.votes = {}
+    game.voters = set() # Очищаем список проголосовавших
+    
+    b = InlineKeyboardBuilder()
+    alive_players = [p for p in game.players.values() if p.is_alive]
+    for p in alive_players:
+        b.button(text=f"{p.full_name}", callback_data=f"vote:{p.user_id}")
+    b.adjust(2)
+    
+    await m.answer(
+        f"🗳 **ГОЛОСОВАНИЕ РАУНДА {game.round_number} ОТКРЫТО!**\n\n"
+        "Кто должен покинуть бункер? Выбирайте мудро, у вас только один голос.", 
+        reply_markup=b.as_markup(), parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("vote:"))
+async def cb_vote(cb: CallbackQuery):
+    t_id = int(cb.data.split(":")[1])
+    uid = cb.from_user.id
+    game = GAMES.get(cb.message.chat.id)
+    
+    if not game or game.state != "VOTING":
+        return await cb.answer("Голосование сейчас не идет.", show_alert=True)
+        
+    voter = game.players[uid]
+
+    # 1. Проверка: Жив ли голосующий?
+    if not voter.is_alive: 
+        return await cb.answer("💀 Мертвые не голосуют!", show_alert=True)
+
+    # 2. Проверка: Голосовал ли он уже? (ИСПРАВЛЕНИЕ БАГА)
+    if uid in game.voters:
+        return await cb.answer("⛔ Вы уже отдали свой голос в этом раунде!", show_alert=True)
+        
+    target = game.players.get(t_id)
+    if not target or not target.is_alive:
+         return await cb.answer("Этот игрок уже не в игре.")
+
+    # Логика голосования с учетом веса голоса
+    weight = voter.vote_weight
+    game.votes[t_id] = game.votes.get(t_id, 0) + weight
+    game.voters.add(uid) # Запоминаем проголосовавшего
+    
+    msg = "✅ Ваш голос принят!"
+    if weight > 1: msg += f" (Сила голоса: {weight})"
+    await cb.answer(msg)
+
+@dp.message(Command("finish_vote"))
+async def cmd_fin(m: Message):
+    game = GAMES.get(m.chat.id)
+    if not game or game.state != "VOTING": return
+    
+    if not game.votes:
+        game.state = "GAME" # Возвращаем в игру
+        await m.answer("🤷‍♂️ Никто не проголосовал. Раунд продолжается, никто не изгнан.")
+        reset_round_effects(game)
+        # Обновляем дашборды (сброс статусов)
+        for p in game.players.values(): await refresh_dash(p.user_id)
+        return
+        
+    # Находим жертву (простой вариант, без обработки ничьей для краткости)
+    victim_id = max(game.votes, key=game.votes.get)
+    victim = game.players[victim_id]
+    votes_count = game.votes[victim_id]
+    
+    victim.is_alive = False
+    
+    game.state = "GAME"
+    game.round_number += 1
+    
+    # Сброс эффектов раунда (щиты, кляпы, двойные голоса)
+    reset_round_effects(game)
+    
+    await m.answer(
+        f"🏁 **ГОЛОСОВАНИЕ ЗАВЕРШЕНО!**\n\n"
+        f"С перевесом в {votes_count} голосов бункер покидает: **{victim.full_name}**.\n\n"
+        f"🗂 **ВСКРЫТИЕ КАРТ ИЗГНАННОГО:**\n"
+        f"🧑‍💼 Профессия: {victim.profession.text}\n"
+        f"❤️ Здоровье: {victim.health.text}\n"
+        f"🧬 Биология: {victim.bio.text}\n"
+        f"💡 Факт: {victim.fact.text}\n\n"
+        f"🚪 Двери бункера закрываются за ним. Оставшиеся выжившие, начинается Раунд {game.round_number}.",
+        parse_mode="Markdown"
+    )
+    
+    # Обновляем дашборд жертвы (показать смерть) и остальных (сбросить статусы)
+    await refresh_dash(victim_id)
+    for p in game.players.values():
+        if p.is_alive: await refresh_dash(p.user_id)
+
+
+# ==========================================
+# 7. ЗАПУСК
+# ==========================================
+
+async def main():
+    print("Бот запущен...")
+    # Удаляем вебхук и чистим старые апдейты при запуске
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен.")
